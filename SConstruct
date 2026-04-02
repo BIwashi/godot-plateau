@@ -96,9 +96,6 @@ def get_cmake_configure_args(platform, build_dir, build_type, env=None):
         # Disable documentation to avoid duplicate "doc" target conflicts
         "-Dtiff-docs=OFF",           # libtiff docs
         "-DRAPIDJSON_BUILD_DOC=OFF", # RapidJSON docs (via glTF-SDK)
-        # CMake 4.x removed compat with cmake_minimum_required < 3.5;
-        # some vendored deps (libcitygml, RapidJSON) still declare 3.0.
-        "-DCMAKE_POLICY_VERSION_MINIMUM=3.0",
     ]
 
     if platform == "windows":
@@ -175,32 +172,26 @@ def get_cmake_configure_args(platform, build_dir, build_type, env=None):
             ]
 
 
-def _patch_gltfsdk_for_python(libplateau_root):
-    """Patch glTF-SDK CMakeLists.txt to use Python instead of PowerShell.
+def _patch_submodule_sources(libplateau_root):
+    """Patch vendored submodule sources for cmake 4.x compat and macOS/Linux builds.
 
-    The upstream glTF-SDK uses a PowerShell script to generate SchemaJson.h,
-    which requires pwsh on macOS/Linux.  This patch replaces the PowerShell
-    command with our Python equivalent (GenerateSchemaJsonHeader.py) located
-    at the repository root, so no extra dependencies are needed.
+    1. glTF-SDK: Replace PowerShell SchemaJson.h generator with Python
+    2. RapidJSON download template: Bump cmake_minimum_required from 2.8.2 to 3.5
     """
+    # --- 1. glTF-SDK: PowerShell → Python ---
     cmake_file = libplateau_root / "3rdparty" / "glTF-SDK" / "glTF-SDK" / "GLTFSDK" / "CMakeLists.txt"
-    if not cmake_file.exists():
-        return
-
-    content = cmake_file.read_text()
     marker = "# patched-by-godot-plateau"
-    if marker in content:
-        return  # already patched
+    if cmake_file.exists():
+        content = cmake_file.read_text()
+        if marker not in content:
+            # Copy our Python generator next to the original PowerShell script
+            # SConstruct is exec()'d by scons, so __file__ is not defined.
+            py_gen_src = Path.cwd() / "GenerateSchemaJsonHeader.py"
+            py_gen_dst = cmake_file.parent / "GenerateSchemaJsonHeader.py"
+            if py_gen_src.exists() and not py_gen_dst.exists():
+                shutil.copy2(py_gen_src, py_gen_dst)
 
-    # Copy our Python generator next to the original PowerShell script
-    # SConstruct is exec()'d by scons, so __file__ is not defined.
-    # Use the current working directory (which is the repo root).
-    py_gen_src = Path.cwd() / "GenerateSchemaJsonHeader.py"
-    py_gen_dst = cmake_file.parent / "GenerateSchemaJsonHeader.py"
-    if py_gen_src.exists() and not py_gen_dst.exists():
-        shutil.copy2(py_gen_src, py_gen_dst)
-
-    old = '''find_program(POWERSHELL_PATH NAMES pwsh powershell NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_FIND_ROOT_PATH)
+            old = '''find_program(POWERSHELL_PATH NAMES pwsh powershell NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_FIND_ROOT_PATH)
 
 add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/GeneratedFiles/SchemaJson.h
@@ -209,7 +200,7 @@ add_custom_command(
     DEPENDS "${schema_deps}"
 )'''
 
-    new = f'''# {marker}
+            new = f'''# {marker}
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
 if(Python3_FOUND)
@@ -229,12 +220,23 @@ else()
     )
 endif()'''
 
-    if old in content:
-        content = content.replace(old, new)
-        cmake_file.write_text(content)
-        print("[godot-plateau] Patched glTF-SDK CMakeLists.txt to use Python instead of PowerShell")
-    else:
-        print("[godot-plateau] WARNING: Could not patch glTF-SDK CMakeLists.txt (source text not found)")
+            if old in content:
+                content = content.replace(old, new)
+                cmake_file.write_text(content)
+                print("[godot-plateau] Patched glTF-SDK CMakeLists.txt to use Python instead of PowerShell")
+            else:
+                print("[godot-plateau] WARNING: Could not patch glTF-SDK CMakeLists.txt (source text not found)")
+
+    # --- 2. RapidJSON download template: cmake_minimum_required 2.8.2 → 3.5 ---
+    rapidjson_template = libplateau_root / "3rdparty" / "glTF-SDK" / "glTF-SDK" / "External" / "RapidJSON" / "CMakeRapidJSONDownload.txt.in"
+    if rapidjson_template.exists():
+        content = rapidjson_template.read_text()
+        old_ver = "cmake_minimum_required(VERSION 2.8.2)"
+        new_ver = "cmake_minimum_required(VERSION 3.5)"
+        if old_ver in content:
+            content = content.replace(old_ver, new_ver)
+            rapidjson_template.write_text(content)
+            print("[godot-plateau] Patched RapidJSON download template: cmake_minimum_required 2.8.2 → 3.5")
 
 
 def configure_libplateau(target, source, env):
@@ -244,7 +246,13 @@ def configure_libplateau(target, source, env):
         raise RuntimeError("cmake executable not found in PATH.")
 
     # Patch submodule sources before cmake configure
-    _patch_gltfsdk_for_python(LIBPLATEAU_ROOT)
+    _patch_submodule_sources(LIBPLATEAU_ROOT)
+
+    # Set CMAKE_POLICY_VERSION_MINIMUM as env var so it propagates to all
+    # cmake subprocesses (ExternalProject_Add, execute_process, etc.).
+    # The -D flag only applies to the top-level configure and doesn't reach
+    # nested cmake invocations like libjpeg-turbo or RapidJSON downloads.
+    os.environ.setdefault("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
 
     platform = env["platform"]
     arch = env.get("arch", "")
