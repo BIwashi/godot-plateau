@@ -193,7 +193,9 @@ def _patch_gltfsdk_for_python(libplateau_root):
         return  # already patched
 
     # Copy our Python generator next to the original PowerShell script
-    py_gen_src = Path(__file__).parent / "GenerateSchemaJsonHeader.py"
+    # SConstruct is exec()'d by scons, so __file__ is not defined.
+    # Use the current working directory (which is the repo root).
+    py_gen_src = Path.cwd() / "GenerateSchemaJsonHeader.py"
     py_gen_dst = cmake_file.parent / "GenerateSchemaJsonHeader.py"
     if py_gen_src.exists() and not py_gen_dst.exists():
         shutil.copy2(py_gen_src, py_gen_dst)
