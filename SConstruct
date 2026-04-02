@@ -96,6 +96,9 @@ def get_cmake_configure_args(platform, build_dir, build_type, env=None):
         # Disable documentation to avoid duplicate "doc" target conflicts
         "-Dtiff-docs=OFF",           # libtiff docs
         "-DRAPIDJSON_BUILD_DOC=OFF", # RapidJSON docs (via glTF-SDK)
+        # CMake 4.x removed compat with cmake_minimum_required < 3.5;
+        # some vendored deps (libcitygml, RapidJSON) still declare 3.0.
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.0",
     ]
 
     if platform == "windows":
@@ -172,11 +175,74 @@ def get_cmake_configure_args(platform, build_dir, build_type, env=None):
             ]
 
 
+def _patch_gltfsdk_for_python(libplateau_root):
+    """Patch glTF-SDK CMakeLists.txt to use Python instead of PowerShell.
+
+    The upstream glTF-SDK uses a PowerShell script to generate SchemaJson.h,
+    which requires pwsh on macOS/Linux.  This patch replaces the PowerShell
+    command with our Python equivalent (GenerateSchemaJsonHeader.py) located
+    at the repository root, so no extra dependencies are needed.
+    """
+    cmake_file = libplateau_root / "3rdparty" / "glTF-SDK" / "glTF-SDK" / "GLTFSDK" / "CMakeLists.txt"
+    if not cmake_file.exists():
+        return
+
+    content = cmake_file.read_text()
+    marker = "# patched-by-godot-plateau"
+    if marker in content:
+        return  # already patched
+
+    # Copy our Python generator next to the original PowerShell script
+    py_gen_src = Path(__file__).parent / "GenerateSchemaJsonHeader.py"
+    py_gen_dst = cmake_file.parent / "GenerateSchemaJsonHeader.py"
+    if py_gen_src.exists() and not py_gen_dst.exists():
+        shutil.copy2(py_gen_src, py_gen_dst)
+
+    old = '''find_program(POWERSHELL_PATH NAMES pwsh powershell NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_FIND_ROOT_PATH)
+
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/GeneratedFiles/SchemaJson.h
+    COMMAND ${POWERSHELL_PATH} -ExecutionPolicy Bypass "${CMAKE_CURRENT_LIST_DIR}/GenerateSchemaJsonHeader.ps1" -outPath "${CMAKE_BINARY_DIR}/GeneratedFiles"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    DEPENDS "${schema_deps}"
+)'''
+
+    new = f'''# {marker}
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
+if(Python3_FOUND)
+    add_custom_command(
+        OUTPUT ${{CMAKE_BINARY_DIR}}/GeneratedFiles/SchemaJson.h
+        COMMAND ${{Python3_EXECUTABLE}} "${{CMAKE_CURRENT_LIST_DIR}}/GenerateSchemaJsonHeader.py" "${{CMAKE_BINARY_DIR}}/GeneratedFiles"
+        WORKING_DIRECTORY ${{CMAKE_CURRENT_LIST_DIR}}
+        DEPENDS "${{schema_deps}}"
+    )
+else()
+    find_program(POWERSHELL_PATH NAMES pwsh powershell NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_FIND_ROOT_PATH)
+    add_custom_command(
+        OUTPUT ${{CMAKE_BINARY_DIR}}/GeneratedFiles/SchemaJson.h
+        COMMAND ${{POWERSHELL_PATH}} -ExecutionPolicy Bypass "${{CMAKE_CURRENT_LIST_DIR}}/GenerateSchemaJsonHeader.ps1" -outPath "${{CMAKE_BINARY_DIR}}/GeneratedFiles"
+        WORKING_DIRECTORY ${{CMAKE_CURRENT_LIST_DIR}}
+        DEPENDS "${{schema_deps}}"
+    )
+endif()'''
+
+    if old in content:
+        content = content.replace(old, new)
+        cmake_file.write_text(content)
+        print("[godot-plateau] Patched glTF-SDK CMakeLists.txt to use Python instead of PowerShell")
+    else:
+        print("[godot-plateau] WARNING: Could not patch glTF-SDK CMakeLists.txt (source text not found)")
+
+
 def configure_libplateau(target, source, env):
     """Configure libplateau with cmake."""
     cmake_executable = shutil.which("cmake")
     if not cmake_executable:
         raise RuntimeError("cmake executable not found in PATH.")
+
+    # Patch submodule sources before cmake configure
+    _patch_gltfsdk_for_python(LIBPLATEAU_ROOT)
 
     platform = env["platform"]
     arch = env.get("arch", "")
