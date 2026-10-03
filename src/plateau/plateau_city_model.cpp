@@ -312,7 +312,7 @@ PLATEAUCityModel::~PLATEAUCityModel() {
 }
 
 bool PLATEAUCityModel::load(const String &gml_path) {
-#ifdef PLATEAU_MOBILE_PLATFORM
+#ifdef PLATEAU_NO_CITYGML_PARSER
     PLATEAU_MOBILE_UNSUPPORTED_V(false);
 #endif
     // Convert Godot String to std::string
@@ -380,7 +380,7 @@ String PLATEAUCityModel::get_gml_path() const {
 TypedArray<PLATEAUMeshData> PLATEAUCityModel::extract_meshes(const Ref<PLATEAUMeshExtractOptions> &options) {
     TypedArray<PLATEAUMeshData> result;
 
-#ifdef PLATEAU_MOBILE_PLATFORM
+#ifdef PLATEAU_NO_CITYGML_PARSER
     PLATEAU_MOBILE_UNSUPPORTED_V(result);
 #endif
 
@@ -985,7 +985,7 @@ void PLATEAUCityModel::_bind_methods() {
 
 // Async API implementation
 void PLATEAUCityModel::load_async(const String &gml_path) {
-#ifdef PLATEAU_MOBILE_PLATFORM
+#ifdef PLATEAU_NO_CITYGML_PARSER
     PLATEAU_MOBILE_UNSUPPORTED();
 #endif
     if (is_processing_.load()) {
@@ -1012,7 +1012,7 @@ void PLATEAUCityModel::_load_thread_func() {
 }
 
 void PLATEAUCityModel::extract_meshes_async(const Ref<PLATEAUMeshExtractOptions> &options) {
-#ifdef PLATEAU_MOBILE_PLATFORM
+#ifdef PLATEAU_NO_CITYGML_PARSER
     PLATEAU_MOBILE_UNSUPPORTED();
 #endif
     if (is_processing_.load()) {

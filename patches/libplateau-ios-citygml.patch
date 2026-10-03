@@ -1,0 +1,47 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8908b4c..5d3d152 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -143,7 +143,10 @@ set(GLM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/glm")
+ if( NOT(IOS OR ANDROID) )
+   ## ユニットテスト
+   add_subdirectory("test")
++endif()
+ 
++# godot-plateau: iOS also builds Xerces-C, so that libcitygml can parse CityGML on the device.
++if( NOT ANDROID )
+   # dependencies
+   ## Xerces-C をビルドします。
+   ### libcitygmlのFindXercesを通すために全てキャッシュ化
+@@ -151,10 +154,15 @@ if( NOT(IOS OR ANDROID) )
+   ### Xerces-cのうちネットワーク機能はビルドしません
+   set(network false CACHE BOOL "" FORCE)
+   ### macOSの場合に Xerces-C が利用する transcodedr を指定します。
+-  if(APPLE)
++  if(IOS)
++    # The macOS Unicode converter (Carbon TEC) does not exist on iOS; libiconv does.
++    set(transcoder gnuiconv CACHE STRING "" FORCE)
++    set(CMAKE_REQUIRED_LIBRARIES iconv)
++  elseif(APPLE)
+     set(transcoder macosunicodeconverter CACHE BOOL "" FORCE)
+   endif()
+   add_subdirectory("3rdparty/xerces-c")
++  unset(CMAKE_REQUIRED_LIBRARIES)
+   set(XERCESC_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/xerces-c/src" "${libplateau_BINARY_DIR}/3rdparty/xerces-c/src" CACHE STRING "" FORCE)
+   set(XERCESC_LIBRARY xerces-c CACHE STRING "" FORCE)
+ endif()
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 4dd26c5..2b8b5b6 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -58,6 +58,10 @@ else()
+   # iOS/Android build
+   # モバイル向けはダミー実装(texture_image_base_dummy.cpp)を使用するためlibpng不要
+   set(PLATEAU_MOBILE_LIBS citygml GLTFSDK c_wrapper "${LibOpenMeshCore}" "${LibOpenMeshTools}" hmm)
++  if(IOS)
++    # godot-plateau: libcitygml parses CityGML with Xerces-C on iOS.
++    list(APPEND PLATEAU_MOBILE_LIBS xerces-c)
++  endif()
+   if(PLATEAU_USE_HTTP)
+     list(APPEND PLATEAU_MOBILE_LIBS crypto ssl)
+   endif()

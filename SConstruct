@@ -49,6 +49,28 @@ DEFAULT_HOMEBREW_PREFIX = "/opt/homebrew"
 
 REPO_ROOT = Path(Dir('#').abspath)
 LIBPLATEAU_ROOT = REPO_ROOT / "libplateau"
+# GLU's polygon tessellator, compiled into the iOS library (iOS has no GLU).
+GLU_ROOT = REPO_ROOT / "thirdparty" / "glu"
+GLU_SOURCES = [
+    "src/libtess/dict.c",
+    "src/libtess/geom.c",
+    "src/libtess/memalloc.c",
+    "src/libtess/mesh.c",
+    "src/libtess/normal.c",
+    "src/libtess/priorityq.c",  # includes priorityq-heap.c
+    "src/libtess/render.c",
+    "src/libtess/sweep.c",
+    "src/libtess/tess.c",
+    "src/libtess/tessmono.c",
+    "src/glu_error.c",
+]
+# Patches applied to the libplateau / libcitygml submodules before cmake configures them:
+# (submodule path, patch file). They let iOS build the CityGML parser (see patches/).
+SUBMODULE_PATCHES = [
+    (LIBPLATEAU_ROOT, REPO_ROOT / "patches" / "libplateau-ios-citygml.patch"),
+    (LIBPLATEAU_ROOT / "3rdparty" / "libcitygml", REPO_ROOT / "patches" / "libcitygml-ios-citygml.patch"),
+    (LIBPLATEAU_ROOT / "3rdparty" / "xerces-c", REPO_ROOT / "patches" / "xerces-c-ios-utf8.patch"),
+]
 BUILD_ROOT = REPO_ROOT / "build"
 
 # Platform-specific libplateau build settings
@@ -146,11 +168,19 @@ def get_cmake_configure_args(platform, build_dir, build_type, env=None):
     elif platform == "ios":
         arch = env.get("arch", "arm64") if env else "arm64"
         ios_arch = "arm64" if arch in ("arm64", "universal") else arch
+        ios_min_version = env.get("ios_min_version", "13.0") if env else "13.0"
         return common_args + [
             "-G", "Ninja",
             "-DCMAKE_SYSTEM_NAME=iOS",
+            # As on macOS: glTF-SDK pins its deployment target to 10.11 and builds with -Werror,
+            # and current SDKs' libc++ warns about such old targets.
+            "-DCMAKE_CXX_FLAGS=-w",
             f"-DCMAKE_OSX_ARCHITECTURES={ios_arch}",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
+            f"-DCMAKE_OSX_DEPLOYMENT_TARGET={ios_min_version}",
+            # Xerces-C's sample programs would be app bundles without an install destination.
+            "-DCMAKE_MACOSX_BUNDLE=OFF",
+            # libcitygml's tessellator includes <OpenGL/glu.h>; thirdparty/glu provides it.
+            f"-DGLU_INCLUDE_PATH={GLU_ROOT / 'include'}",
         ]
     else:  # linux
         use_clang = env.get("use_clang", False) if env else False
@@ -239,6 +269,19 @@ endif()'''
             print("[godot-plateau] Patched RapidJSON download template: cmake_minimum_required 2.8.2 → 3.5")
 
 
+def _apply_submodule_patches():
+    """Apply patches/*.patch to the submodules once (a patch that reverses cleanly is already in)."""
+    for repo, patch in SUBMODULE_PATCHES:
+        def git_apply(*args):
+            return subprocess.call(["git", "-C", str(repo), "apply", *args, str(patch)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if git_apply("--reverse", "--check") == 0:
+            continue
+        if git_apply() != 0:
+            raise RuntimeError(f"Could not apply {patch.name} to {repo}")
+        print(f"[godot-plateau] Applied {patch.name}")
+
+
 def configure_libplateau(target, source, env):
     """Configure libplateau with cmake."""
     cmake_executable = shutil.which("cmake")
@@ -247,6 +290,7 @@ def configure_libplateau(target, source, env):
 
     # Patch submodule sources before cmake configure
     _patch_submodule_sources(LIBPLATEAU_ROOT)
+    _apply_submodule_patches()
 
     # Set CMAKE_POLICY_VERSION_MINIMUM as env var so it propagates to all
     # cmake subprocesses (ExternalProject_Add, execute_process, etc.).
@@ -345,7 +389,8 @@ if platform == "macos" and env.get("macos_deployment_target", "default") == "def
     env.Append(CCFLAGS=["-mmacosx-version-min=15.0"])
     env.Append(LINKFLAGS=["-mmacosx-version-min=15.0"])
 
-# iOS: Set minimum version to 13.0 to match libplateau's CMAKE_OSX_DEPLOYMENT_TARGET
+# iOS: Default the minimum version to 13.0 (libplateau's CMAKE_OSX_DEPLOYMENT_TARGET follows
+# ios_min_version, so an explicit ios_min_version=... applies to both)
 if platform == "ios" and env.get("ios_min_version", "12.0") == "12.0":
     env["ios_min_version"] = "13.0"
     # Note: godot-cpp/tools/ios.py already added -miphoneos-version-min with old value,
@@ -403,6 +448,9 @@ if not skip_libplateau_build:
     )
     libplateau_build_node = libplateau_build[0]
     env.NoCache(libplateau_build_node)
+    # Let CMake/Ninja decide what is out of date (a changed submodule source or patch); the
+    # extension relinks only when a library's content changed.
+    env.AlwaysBuild(libplateau_build_node)
 
     # Declare 3rdparty libraries as side effects for Android/iOS
     # This tells SCons that CMake build also produces these files
@@ -415,6 +463,8 @@ if not skip_libplateau_build:
             str(libplateau_3rdparty / "hmm" / "src" / "libhmm.a"),
             str(libplateau_3rdparty / "glTF-SDK" / "glTF-SDK" / "GLTFSDK" / "libGLTFSDK.a"),
         ]
+        if platform == "ios":
+            thirdparty_libs.append(str(libplateau_3rdparty / "xerces-c" / "src" / "libxerces-c.a"))
         for lib in thirdparty_libs:
             env.SideEffect(lib, libplateau_build_node)
 else:
@@ -479,7 +529,11 @@ elif platform == "ios":
         File(str(libplateau_3rdparty / "openmesh" / "src" / "OpenMesh" / "Tools" / "libOpenMeshTools.a")),
         File(str(libplateau_3rdparty / "hmm" / "src" / "libhmm.a")),
         File(str(libplateau_3rdparty / "glTF-SDK" / "glTF-SDK" / "GLTFSDK" / "libGLTFSDK.a")),
+        # The CityGML parser: Xerces-C (gnuiconv transcoder, hence libiconv)
+        File(str(libplateau_3rdparty / "xerces-c" / "src" / "libxerces-c.a")),
+        "iconv",
     ])
+    env.Append(CPPPATH=[str(GLU_ROOT / "include")])
 
 # Suppress warnings from libplateau headers and enable C++ exceptions
 if platform == "windows":
@@ -492,6 +546,8 @@ else:
 # Source files
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp") + Glob("src/plateau/*.cpp")
+if platform == "ios":
+    sources += [File(str(GLU_ROOT / path)) for path in GLU_SOURCES]
 
 # Build suffix (remove .dev and .universal for compatibility)
 suffix = env['suffix'].replace(".dev", "").replace(".universal", "")

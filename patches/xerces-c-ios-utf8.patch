@@ -1,0 +1,34 @@
+diff --git a/src/xercesc/util/Transcoders/IconvGNU/IconvGNUTransService.cpp b/src/xercesc/util/Transcoders/IconvGNU/IconvGNUTransService.cpp
+index 0cd2d675b..1986b092c 100644
+--- a/src/xercesc/util/Transcoders/IconvGNU/IconvGNUTransService.cpp
++++ b/src/xercesc/util/Transcoders/IconvGNU/IconvGNUTransService.cpp
+@@ -406,6 +406,15 @@ size_t    IconvGNUWrapper::iconvTo ( const char    *fromPtr,
+ //  IconvGNUTransService: Constructors and Destructor
+ // ---------------------------------------------------------------------------
+ 
++// godot-plateau: Apple platforms use UTF-8 for every C string, but an iOS app runs in the "C"
++// locale with no LANG, so the ISO-8859-1 fallback below cannot transcode the Japanese text in
++// PLATEAU CityGML ("invalid multi-byte sequence"). Fall back to UTF-8 there.
++#if defined(__APPLE__)
++#define XERCES_ICONVGNU_FALLBACK_CP "UTF-8"
++#else
++#define XERCES_ICONVGNU_FALLBACK_CP "iso-8859-1"
++#endif
++
+ IconvGNUTransService::IconvGNUTransService(MemoryManager* manager)
+     : IconvGNUWrapper(manager), fUnicodeCP(0)
+ {
+@@ -429,11 +438,11 @@ IconvGNUTransService::IconvGNUTransService(MemoryManager* manager)
+     if (fLocalCP == NULL || *fLocalCP == 0 ||
+         strcmp (fLocalCP, "C") == 0 ||
+         strcmp (fLocalCP, "POSIX") == 0)
+-        fLocalCP = "iso-8859-1";    // fallback locale
++        fLocalCP = XERCES_ICONVGNU_FALLBACK_CP;    // fallback locale
+     else {
+         const char *ptr = strchr (fLocalCP, '.');
+         if (ptr == NULL)
+-            fLocalCP = "iso-8859-1";    // fallback locale
++            fLocalCP = XERCES_ICONVGNU_FALLBACK_CP;    // fallback locale
+         else
+             fLocalCP = ptr + 1;
+     }

@@ -2,7 +2,6 @@
 
 #include "plateau_platform.h"
 
-#ifndef PLATEAU_MOBILE_PLATFORM
 #include <plateau/polygon_mesh/model.h>
 #include <plateau/polygon_mesh/mesh.h>
 
@@ -14,4 +13,3 @@ using PlateauNode = plateau::polygonMesh::Node;
 using PlateauMesh = plateau::polygonMesh::Mesh;
 
 } // namespace godot
-#endif

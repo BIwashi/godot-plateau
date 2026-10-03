@@ -1,0 +1,44 @@
+diff --git a/sources/CMakeLists.txt b/sources/CMakeLists.txt
+index 3d7387d..f9da725 100644
+--- a/sources/CMakeLists.txt
++++ b/sources/CMakeLists.txt
+@@ -6,8 +6,12 @@ ENDIF (NOT DEFINED CMAKE_MODULE_PATH)
+ 
+ SET( target citygml )
+ 
++# godot-plateau: iOS builds the CityGML parser too (Xerces-C from libplateau, GLU's tessellator
++# from godot-plateau's thirdparty/glu via GLU_INCLUDE_PATH), so only Android uses the dummies.
+ if( NOT(IOS OR ANDROID) )
+   FIND_PACKAGE( OpenGL REQUIRED )
++endif()
++if( NOT ANDROID )
+   FIND_PACKAGE( Xerces REQUIRED )
+ endif()
+ 
+@@ -52,7 +56,7 @@ INCLUDE_DIRECTORIES(    ${CMAKE_CURRENT_SOURCE_DIR}/include
+                         ${GLU_INCLUDE_PATH}
+                         ${GDAL_INCLUDE_DIR})
+ 
+-if( NOT(IOS OR ANDROID) )
++if( NOT ANDROID )
+   SET(SOURCES
+     src/citygml/attributesmap.cpp
+     src/citygml/citymodel.cpp
+@@ -162,7 +166,7 @@ endif(UNIX)
+ 
+ 
+ 
+-if( NOT(IOS OR ANDROID) )
++if( NOT ANDROID )
+     SET(PUBLIC_HEADER
+       include/citygml/citygml_api.h
+       include/citygml/citygml_export.h
+@@ -301,7 +305,7 @@ generate_export_header(citygml
+                        EXPORT_MACRO_NAME LIBCITYGML_EXPORT
+                        EXPORT_FILE_NAME ${EXPORT_HEADER_FILE_NAME})
+ 
+-if( NOT(IOS OR ANDROID) )
++if( NOT ANDROID )
+   TARGET_LINK_LIBRARIES( ${target} PUBLIC ${XERCESC_LIBRARIES} ${OPENGL_LIBRARIES} )
+ endif()
+ 

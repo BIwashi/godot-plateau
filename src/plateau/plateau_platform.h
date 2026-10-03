@@ -7,6 +7,13 @@
 #define PLATEAU_MOBILE_PLATFORM
 #endif
 
+// iOS builds the CityGML parser (Xerces-C and GLU's tessellator, see thirdparty/glu and
+// patches/), so CityGML loading and mesh extraction work there. Android still uses
+// libcitygml's dummy parser.
+#if defined(PLATEAU_MOBILE_PLATFORM) && !defined(IOS_ENABLED)
+#define PLATEAU_NO_CITYGML_PARSER
+#endif
+
 // Error macros for unsupported features on mobile platforms
 // Following Unity SDK approach: return error instead of crashing
 
