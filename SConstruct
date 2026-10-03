@@ -108,8 +108,26 @@ def get_cmake_build_type(target_name):
     return target_to_cmake.get(target_name, "Release")
 
 
+# Compiler flag that rewrites the checkout's absolute path to "." in __FILE__, debug info and
+# assertion messages, so the built libraries do not carry the build machine's directory names.
+PATH_MAP_FLAG = f"-ffile-prefix-map={REPO_ROOT}=."
+
+
 def get_cmake_configure_args(platform, build_dir, build_type, env=None):
     """Get platform-specific cmake configure arguments."""
+    args = _get_cmake_configure_args(platform, build_dir, build_type, env)
+    if platform == "windows":
+        return args
+    # Add PATH_MAP_FLAG to the C and C++ flags of every libplateau sub-build.
+    flags = [a for a in args if a.startswith("-DCMAKE_CXX_FLAGS")]
+    if flags:
+        args = [f"{a} {PATH_MAP_FLAG}" if a in flags else a for a in args]
+    else:
+        args = args + [f"-DCMAKE_CXX_FLAGS={PATH_MAP_FLAG}"]
+    return args + [f"-DCMAKE_C_FLAGS={PATH_MAP_FLAG}"]
+
+
+def _get_cmake_configure_args(platform, build_dir, build_type, env=None):
     common_args = [
         "-DPLATEAU_USE_FBX=OFF",
         "-DPLATEAU_USE_HTTP=OFF",  # Disable HTTP/OpenSSL - use Godot's HTTPRequest instead
@@ -374,6 +392,10 @@ Run the following command to download godot-cpp:
     git submodule update --init --recursive""")
     sys.exit(1)
 
+# Map the checkout's path to "." in everything compiled here, godot-cpp included (PATH_MAP_FLAG).
+if ARGUMENTS.get("platform", "") != "windows":
+    env.Append(CCFLAGS=[PATH_MAP_FLAG])
+
 # Load godot-cpp environment
 env = SConscript("godot-cpp/SConstruct", {"env": env, "customs": customs})
 
@@ -403,6 +425,10 @@ if platform == "ios" and env.get("ios_min_version", "12.0") == "12.0":
     else:
         env.Append(CCFLAGS=["-miphoneos-version-min=13.0"])
         env.Append(LINKFLAGS=["-miphoneos-version-min=13.0"])
+
+# Apple release builds: leave out the debug map (object file paths) and local symbols.
+if platform in ("macos", "ios") and target == "template_release":
+    env.Append(LINKFLAGS=["-Wl,-S", "-Wl,-x"])
 
 # Ensure libplateau exists
 if not LIBPLATEAU_ROOT.exists():
@@ -438,6 +464,9 @@ if not skip_libplateau_build:
     )
     libplateau_configure_node = libplateau_configure[0]
     env.NoCache(libplateau_configure_node)
+    # Configure again when the cmake arguments change (e.g. compiler flags).
+    env.Depends(libplateau_configure_node, env.Value(" ".join(
+        get_cmake_configure_args(platform, libplateau_build_dir, libplateau_build_type, env))))
 
     # Build step - target is the actual library file
     # Also use NoCache() since CMake manages its own build artifacts
